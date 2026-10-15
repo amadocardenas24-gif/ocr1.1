@@ -1,425 +1,368 @@
-<!doctype html>
-<html lang="es">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Lector de recetas médicas</title>
-<style>
-  :root { --bg:#f4f8fb; --card:#fff; --ink:#12263a; --muted:#5b6f82; --brand:#0e7c86; --brand-d:#0a5c64; --line:#d8e3ec; --warn-bg:#fff4d6; --warn-line:#e6c766; --bad:#b3261e; --ok:#1b7f3b; }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); padding:env(safe-area-inset-top) 16px 32px; }
-  main { max-width:640px; margin:0 auto; }
-  h1 { font-size:1.35rem; margin:18px 0 4px; }
-  p.sub { margin:0 0 14px; color:var(--muted); font-size:.92rem; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px; }
-  .viewer { position:relative; background:#0b1620; border-radius:12px; overflow:hidden; aspect-ratio:3/4; display:none; }
-  .viewer.on { display:block; }
-  video, .viewer img { width:100%; height:100%; object-fit:cover; display:block; }
-  .viewer img { object-fit:contain; }
-  .guide { position:absolute; inset:8% 6%; border:2px dashed rgba(255,255,255,.7); border-radius:10px; pointer-events:none; }
-  .hint { position:absolute; left:0; right:0; bottom:8px; text-align:center; color:#fff; font-size:.8rem; text-shadow:0 1px 3px #000; }
-  .row { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
-  .row[hidden] { display:none; }
-  button, .btn { appearance:none; border:0; background:var(--brand); color:#fff; font-size:1rem; padding:12px 16px; border-radius:10px; cursor:pointer; flex:1 1 auto; text-align:center; font-weight:600; }
-  button:hover, .btn:hover { background:var(--brand-d); }
-  button.sec, .btn.sec { background:#e6eef5; color:var(--ink); }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  input[type=file] { display:none; }
-  .bar { height:10px; background:#e6eef5; border-radius:6px; overflow:hidden; margin-top:10px; display:none; position:relative; }
-  .bar.on { display:block; }
-  .bar > i { position:absolute; top:0; bottom:0; width:40%; background:var(--brand); border-radius:6px; animation:slide 1.1s ease-in-out infinite; }
-  @keyframes slide { 0% { left:-40%; } 100% { left:100%; } }
-  #status { font-size:.9rem; color:var(--muted); margin-top:8px; min-height:1.2em; }
-  #status.err { color:var(--bad); }
-  textarea { width:100%; min-height:220px; border:1px solid var(--line); border-radius:10px; padding:10px; font:inherit; font-size:1rem; resize:vertical; }
-  .warn { background:var(--warn-bg); border:1px solid var(--warn-line); border-radius:10px; padding:10px 12px; font-size:.88rem; margin-bottom:12px; }
-  .priv { font-size:.8rem; color:var(--muted); margin:10px 0 0; }
-  label { font-size:.85rem; color:var(--muted); display:block; margin-bottom:4px; }
-  h2 { font-size:1rem; margin:0 0 8px; }
-  #info { font-size:.92rem; margin-bottom:10px; }
-  #info div { margin:2px 0; }
-  #info b { color:var(--muted); font-weight:600; }
-  .med { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; }
-  .med.unsure { border-color:var(--warn-line); background:var(--warn-bg); }
-  .med .top { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
-  .med b.n { font-size:1rem; }
-  .med span.f { display:block; font-size:.9rem; color:var(--muted); }
-  .badge { font-size:.72rem; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
-  .badge.alta { background:#dff3e4; color:var(--ok); }
-  .badge.media { background:#ffe9b3; color:#7a5200; }
-  .badge.baja { background:#fbd9d6; color:var(--bad); }
-  .med em { display:block; font-size:.82rem; font-style:normal; color:#7a5200; margin-top:5px; }
-  .med em.soft { color:var(--muted); }
-  #extra { font-size:.88rem; color:var(--muted); margin-top:8px; white-space:pre-wrap; }
-</style>
-</head>
-<body>
-<main>
-  <h1>Lector de recetas médicas</h1>
-  <p class="sub">Apunta la cámara trasera a la receta y toma la foto.</p>
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Pruebas de ocr_farmacia.py que NO necesitan PyTorch ni EasyOCR.
 
-  <div class="warn">⚠️ La lectura con IA puede equivocarse, sobre todo con letra manuscrita. Verifica siempre nombres de medicamentos y dosis con el médico o el farmacéutico.</div>
+Un lector falso imita la forma exacta de retorno de easyocr.Reader.detect() y
+recognize(). Se prueba: preprocesamiento, relleno de cajas, corrector léxico,
+cableado del pipeline y métricas. NO prueban la calidad del reconocimiento de
+la red neuronal: para eso use --etiquetas con sus propias fotos.
 
-  <section class="card">
-    <div class="viewer" id="viewer">
-      <video id="video" playsinline muted autoplay></video>
-      <img id="photo" alt="Foto capturada" hidden />
-      <div class="guide" id="guide"></div>
-      <div class="hint" id="hint">Receta plana, con buena luz y ocupando todo el recuadro</div>
-    </div>
+Ejecutar:  python -m unittest -v test_ocr_farmacia
+"""
 
-    <div class="row" id="rowIdle">
-      <button id="btnStart">📷 Abrir cámara</button>
-      <label class="btn sec" for="fileCam">Tomar foto (app de cámara)</label>
-      <label class="btn sec" for="fileGal">Elegir de galería</label>
-    </div>
-    <div class="row" id="rowLive" hidden>
-      <button id="btnShot">📸 Capturar</button>
-      <button class="sec" id="btnFlip">🔄 Cambiar cámara</button>
-      <button class="sec" id="btnTorch" hidden>🔦 Linterna</button>
-      <button class="sec" id="btnStop">Cerrar</button>
-    </div>
-    <div class="row" id="rowShot" hidden>
-      <button id="btnRead">🔍 Leer receta</button>
-      <button class="sec" id="btnRetake">Repetir</button>
-    </div>
+import json
+import tempfile
+import unittest
+from pathlib import Path
 
-    <p class="priv">🔒 Al pulsar "Leer receta", la foto (y una versión mejorada de ella) se envía a un servicio de IA (Anthropic) para analizarla.</p>
+import cv2
+import numpy as np
 
-    <input type="file" id="fileCam" accept="image/*" capture="environment" />
-    <input type="file" id="fileGal" accept="image/*" />
-    <canvas id="canvas" hidden></canvas>
+import ocr_farmacia as o
 
-    <div class="bar" id="bar"><i></i></div>
-    <div id="status"></div>
-  </section>
 
-  <section class="card" id="medsCard" hidden>
-    <h2>Resultado</h2>
-    <div id="info"></div>
-    <div id="meds"></div>
-    <div id="extra"></div>
-  </section>
+def imagen_con_texto(ancho=1000, alto=600, claro_sobre_oscuro=False, gradiente=True):
+    """Imagen sintética con texto y, opcionalmente, iluminación desigual."""
+    img = np.full((alto, ancho, 3), 235, np.uint8)
+    if gradiente:
+        rampa = np.linspace(0.55, 1.0, ancho, dtype=np.float32)[None, :, None]
+        img = (img.astype(np.float32) * rampa).astype(np.uint8)
+    cv2.putText(img, "ASPIRINA 500 mg", (60, 200), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (20, 20, 20), 5, cv2.LINE_AA)
+    cv2.putText(img, "Tomar con agua", (60, 380), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (30, 30, 30), 4, cv2.LINE_AA)
+    if claro_sobre_oscuro:
+        img = 255 - img
+    return img
 
-  <section class="card">
-    <label for="out">Transcripción (puedes editarla)</label>
-    <textarea id="out" placeholder="Aquí aparecerá el texto de la receta…"></textarea>
-    <div class="row">
-      <button id="btnCopy" class="sec">Copiar</button>
-      <button id="btnClear" class="sec">Limpiar</button>
-    </div>
-  </section>
-</main>
 
-<script>
-(() => {
-  const $ = id => document.getElementById(id);
-  const video = $('video'), photo = $('photo'), canvas = $('canvas');
-  const viewer = $('viewer'), guide = $('guide'), hint = $('hint');
-  const rowIdle = $('rowIdle'), rowLive = $('rowLive'), rowShot = $('rowShot');
-  const btnTorch = $('btnTorch');
-  const statusEl = $('status'), bar = $('bar'), out = $('out');
-  const medsCard = $('medsCard'), infoEl = $('info'), medsEl = $('meds'), extraEl = $('extra');
+class LectorFalso:
+    """Misma firma y formas de retorno que easyocr.Reader (verificado en easyocr 1.7.2)."""
 
-  const MAX_MAIN = 2576;     // lado largo máximo que la IA procesa sin reducir
-  const MAX_ENH = 2000;      // versión realzada (más liviana)
+    def __init__(self, horizontales=None, libres=None, lectura=None):
+        self.horizontales = horizontales or []
+        self.libres = libres or []
+        self.lectura = lectura
+        self.detect_llamadas = []
+        self.recognize_llamadas = []
 
-  let stream = null, facing = 'environment', capturedBlob = null, torchOn = false;
+    def detect(self, img, **kw):
+        self.detect_llamadas.append({"shape": img.shape, "kw": kw})
+        return [self.horizontales], [self.libres]  # (horizontal_list_agg, free_list_agg)
 
-  const setStatus = (t, err) => { statusEl.textContent = t; statusEl.className = err ? 'err' : ''; };
-  const show = (el, on) => el.hidden = !on;
-  const newCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+    def recognize(self, img, horizontal_list=None, free_list=None, **kw):
+        self.recognize_llamadas.append({"img": img, "h": horizontal_list, "f": free_list, "kw": kw})
+        caja = horizontal_list[0] if horizontal_list else free_list[0]
+        texto, conf = self.lectura(caja, img)
+        if not texto:
+            return []
+        return [([[0, 0], [1, 0], [1, 1], [0, 1]], texto, conf)]
 
-  // ---------- Cámara ----------
-  async function startCamera() {
-    stopCamera();
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setStatus('La cámara requiere HTTPS. Usa "Tomar foto (app de cámara)" como alternativa.', true);
-      return;
-    }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: facing }, width: { ideal: 4096 }, height: { ideal: 3072 } }
-      });
-      video.srcObject = stream;
-      await video.play();
-      viewer.classList.add('on');
-      video.hidden = false; photo.hidden = true; guide.hidden = false; hint.hidden = false;
-      show(rowIdle, false); show(rowLive, true); show(rowShot, false);
 
-      const track = stream.getVideoTracks()[0];
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      show(btnTorch, !!caps.torch);
-      torchOn = false;
-      if (caps.focusMode && caps.focusMode.includes('continuous')) {
-        track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
-      }
-      setStatus('');
-    } catch (e) {
-      setStatus(e.name === 'NotAllowedError'
-        ? 'Permiso de cámara denegado. Actívalo en los ajustes del navegador.'
-        : 'No se pudo abrir la cámara (' + e.name + '). Prueba "Tomar foto (app de cámara)".', true);
-    }
-  }
+def es_binaria(img):
+    return set(np.unique(img).tolist()) <= {0, 255}
 
-  function stopCamera() {
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    video.srcObject = null;
-  }
 
-  function closeToIdle() {
-    stopCamera();
-    viewer.classList.remove('on');
-    show(rowIdle, true); show(rowLive, false); show(rowShot, false);
-  }
+class TestLevenshtein(unittest.TestCase):
+    def test_valores_conocidos(self):
+        self.assertEqual(o.distancia_levenshtein("kitten", "sitting"), 3)
+        self.assertEqual(o.distancia_levenshtein("", "abc"), 3)
+        self.assertEqual(o.distancia_levenshtein("igual", "igual"), 0)
+        self.assertEqual(o.distancia_levenshtein("aspi", "aspirina"), 4)
 
-  function capture() {
-    if (!video.videoWidth) return;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
-    canvas.toBlob(b => { setCaptured(b); stopCamera(); }, 'image/jpeg', 0.95);
-  }
+    def test_python_puro_coincide_con_motor_activo(self):
+        pares = [("amoxicilna", "amoxicilina"), ("ibuprofeo", "ibuprofeno"), ("abc", "xyz"), ("a", "")]
+        for a, b in pares:
+            self.assertEqual(o._distancia_python(a, b), o.distancia_levenshtein(a, b))
 
-  function setCaptured(blob) {
-    capturedBlob = blob;
-    if (photo.src) URL.revokeObjectURL(photo.src);
-    photo.src = URL.createObjectURL(blob);
-    viewer.classList.add('on');
-    video.hidden = true; photo.hidden = false; guide.hidden = true; hint.hidden = true;
-    show(rowIdle, false); show(rowLive, false); show(rowShot, true);
-    setStatus('Foto lista. Revisa que se lea bien y pulsa "Leer receta".');
-  }
+    def test_levenshtein_solo_no_resuelve_aspi(self):
+        # Justifica el completado de prefijos: con distancia de edición pura, "aspi" no llega a "aspirina"
+        self.assertAlmostEqual(o.similitud_levenshtein("aspi", "aspirina"), 0.5)
+        self.assertLess(0.5, o.Config().umbral_similitud)
 
-  // ---------- Imagen ----------
-  async function loadBitmap(blob) {
-    try { return await createImageBitmap(blob, { imageOrientation: 'from-image' }); }
-    catch { return await createImageBitmap(blob); }
-  }
 
-  function toBase64(canvasEl, quality) {
-    return new Promise((res, rej) => {
-      canvasEl.toBlob(b => {
-        if (!b) return rej(new Error('No se pudo codificar la imagen'));
-        const fr = new FileReader();
-        fr.onload = () => res(String(fr.result).split(',')[1]);
-        fr.onerror = rej;
-        fr.readAsDataURL(b);
-      }, 'image/jpeg', quality);
-    });
-  }
+class TestCorrector(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.cfg = o.Config()
+        cls.corrector = o.Corrector(o.Diccionario.desde_archivo(), cls.cfg)
 
-  function scaled(bmp, max) {
-    const k = Math.min(1, max / Math.max(bmp.width, bmp.height)); // nunca se agranda
-    const c = newCanvas(Math.round(bmp.width * k), Math.round(bmp.height * k));
-    c.getContext('2d', { willReadFrequently: true }).drawImage(bmp, 0, 0, c.width, c.height);
-    return c;
-  }
+    def tok(self, palabra):
+        return self.corrector.corregir_token(palabra)
 
-  // Mide nitidez (varianza del laplaciano) y brillo medio en una copia pequeña
-  function quality(bmp) {
-    const c = scaled(bmp, 640), w = c.width, h = c.height;
-    const d = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
-    const g = new Float32Array(w * h);
-    let sum = 0;
-    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
-      g[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      sum += g[j];
-    }
-    let s = 0, s2 = 0, n = 0;
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const i = y * w + x;
-        const l = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w];
-        s += l; s2 += l * l; n++;
-      }
-    }
-    return { mean: sum / (w * h), sharp: s2 / n - (s / n) * (s / n) };
-  }
+    def test_aspi_se_completa_a_aspirina(self):
+        r = self.tok("aspi")
+        self.assertEqual((r.estado, r.corregido), ("prefijo", "Aspirina"))
 
-  // Versión en gris con corrección de sombras: divide cada píxel por el fondo estimado
-  function enhanced(bmp) {
-    const c = scaled(bmp, MAX_ENH), w = c.width, h = c.height;
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    const img = ctx.getImageData(0, 0, w, h), d = img.data;
-    for (let i = 0; i < d.length; i += 4) {
-      d[i] = d[i + 1] = d[i + 2] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    }
-    ctx.putImageData(img, 0, 0);
+    def test_mayusculas_se_respetan(self):
+        self.assertEqual(self.tok("ASPI").corregido, "ASPIRINA")
 
-    const small = newCanvas(Math.max(1, w >> 4), Math.max(1, h >> 4));
-    const sx = small.getContext('2d');
-    sx.imageSmoothingQuality = 'high';
-    sx.drawImage(c, 0, 0, small.width, small.height);
-    const back = newCanvas(w, h);
-    const bx = back.getContext('2d', { willReadFrequently: true });
-    bx.imageSmoothingEnabled = true; bx.imageSmoothingQuality = 'high';
-    bx.drawImage(small, 0, 0, w, h);
-    const bg = bx.getImageData(0, 0, w, h).data;
+    def test_errores_de_letras(self):
+        self.assertEqual(self.tok("amoxicilna").corregido, "Amoxicilina")
+        self.assertEqual(self.tok("ibuprofeo").corregido, "Ibuprofeno")
+        self.assertEqual(self.tok("paracetmol").estado, "fuzzy")
 
-    for (let i = 0; i < d.length; i += 4) {
-      const v = Math.min(255, (d[i] / Math.max(bg[i], 20)) * 245);
-      d[i] = d[i + 1] = d[i + 2] = v;
-    }
-    ctx.putImageData(img, 0, 0);
-    return c;
-  }
+    def test_acentuacion_restaurada(self):
+        r = self.tok("acetaminofen")
+        self.assertEqual((r.estado, r.corregido), ("acentuacion", "Acetaminofén"))
 
-  // ---------- Resultados ----------
-  function addLine(parent, label, value) {
-    if (!value) return;
-    const d = document.createElement('div');
-    const b = document.createElement('b');
-    b.textContent = label + ': ';
-    d.appendChild(b);
-    d.appendChild(document.createTextNode(value));
-    parent.appendChild(d);
-  }
+    def test_exacto_no_se_toca(self):
+        r = self.tok("Aspirina")
+        self.assertEqual((r.estado, r.corregido), ("exacto", "Aspirina"))
 
-  function note(parent, text, soft) {
-    const e = document.createElement('em');
-    if (soft) e.className = 'soft';
-    e.textContent = text;
-    parent.appendChild(e);
-  }
+    def test_palabras_comunes_no_se_corrigen(self):
+        for palabra in ("para", "tabletas", "dosis", "cada", "tabl", "oral"):
+            r = self.tok(palabra)
+            self.assertEqual((r.estado, r.corregido), ("comun", palabra), palabra)
 
-  function renderResult(data) {
-    infoEl.textContent = '';
-    addLine(infoEl, 'Paciente', data.paciente);
-    addLine(infoEl, 'Médico', data.medico);
-    addLine(infoEl, 'Fecha', data.fecha);
+    def test_tokens_cortos_o_desconocidos_quedan_igual(self):
+        for palabra in ("mg", "asp", "ml", "Xyzabcdef"):
+            r = self.tok(palabra)
+            self.assertEqual((r.estado, r.corregido), ("sin_cambio", palabra), palabra)
 
-    medsEl.textContent = '';
-    (Array.isArray(data.medicamentos) ? data.medicamentos : []).forEach(m => {
-      const div = document.createElement('div');
-      div.className = 'med' + (m.incierto ? ' unsure' : '');
+    def test_prefijo_ambiguo_no_se_corrige(self):
+        r = self.tok("clon")
+        self.assertEqual(r.estado, "ambiguo")
+        self.assertEqual(r.corregido, "clon")
+        self.assertIn("Clonazepam", r.candidatos)
+        self.assertIn("Clonidina", r.candidatos)
 
-      const top = document.createElement('div');
-      top.className = 'top';
-      const name = document.createElement('b');
-      name.className = 'n';
-      name.textContent = (m.nombre || '(sin nombre legible)') + (m.concentracion ? ' ' + m.concentracion : '');
-      const badge = document.createElement('span');
-      const conf = ['alta', 'media', 'baja'].includes(m.confianza) ? m.confianza : 'media';
-      badge.className = 'badge ' + conf;
-      badge.textContent = 'Confianza ' + conf;
-      top.appendChild(name); top.appendChild(badge);
-      div.appendChild(top);
+    def test_texto_completo_conserva_numeros_y_signos(self):
+        texto, tokens = self.corrector.corregir_texto("Aspi 500 mg c/8h, via oral")
+        self.assertEqual(texto, "Aspirina 500 mg c/8h, via oral")
+        self.assertEqual(tokens[0].estado, "prefijo")
 
-      [['Forma', m.forma], ['Dosis', m.dosis], ['Vía', m.via], ['Frecuencia', m.frecuencia],
-       ['Duración', m.duracion], ['Indicaciones', m.indicaciones]].forEach(([k, v]) => {
-        if (v) { const s = document.createElement('span'); s.className = 'f'; s.textContent = k + ': ' + v; div.appendChild(s); }
-      });
+    def test_confusion_digito_letra(self):
+        self.assertEqual(self.corrector.corregir_texto("Aspir1na")[0], "Aspirina")
+        self.assertEqual(self.corrector.corregir_texto("ASPIR1NA")[0], "ASPIRINA")
+        self.assertEqual(self.corrector.corregir_texto("Ibuprofen0")[0], "Ibuprofeno")
 
-      if (Array.isArray(m.alternativas) && m.alternativas.length) {
-        note(div, '⚠️ Podría decir también: ' + m.alternativas.join(', ') + '. Confírmalo con el médico o farmacéutico.');
-      } else if (m.incierto) {
-        note(div, '⚠️ Lectura dudosa: confirma este dato con el médico o farmacéutico.');
-      }
-      if (m.validacion && m.validacion.estado === 'no_encontrado') {
-        note(div, 'No está en el diccionario local (puede ser una marca o un nombre poco común).', true);
-      }
-      medsEl.appendChild(div);
-    });
-    if (!medsEl.children.length) medsEl.textContent = 'No se detectaron medicamentos.';
+    def test_dosis_y_vitaminas_no_se_tocan(self):
+        for texto in ("500mg", "B12", "0.5ml", "Lote A1234"):
+            self.assertEqual(self.corrector.corregir_texto(texto)[0], texto)
 
-    const parts = [];
-    if (data.indicaciones_generales) parts.push('Indicaciones generales: ' + data.indicaciones_generales);
-    if (data.notas) parts.push('Notas: ' + data.notas);
-    extraEl.textContent = parts.join('\n\n');
-    medsCard.hidden = false;
-  }
+    def test_sin_diccionario_ingles(self):
+        # "Aspirin" (inglés) se trata como error de lectura de "Aspirina", nunca al revés
+        self.assertEqual(self.tok("Aspirin").corregido, "Aspirina")
 
-  // ---------- Lectura ----------
-  async function readReceipt() {
-    if (!capturedBlob) return;
-    $('btnRead').disabled = true;
-    bar.classList.add('on');
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 270000);
-    try {
-      setStatus('Preparando imágenes…');
-      const bmp = await loadBitmap(capturedBlob);
 
-      const q = quality(bmp);
-      const problemas = [];
-      if (q.sharp < 25) problemas.push('parece borrosa');
-      if (q.mean < 70) problemas.push('está muy oscura');
-      if (q.mean > 238) problemas.push('está sobreexpuesta');
-      if (problemas.length &&
-          !confirm('La foto ' + problemas.join(' y ') + '. Con letra manuscrita eso baja mucho la precisión.\n\n¿Enviarla de todos modos?\n(Cancelar para repetir la foto)')) {
-        setStatus('Repite la foto con más luz y enfocando bien.');
-        return;
-      }
+class TestPreprocesamiento(unittest.TestCase):
+    def setUp(self):
+        self.cfg = o.Config()
 
-      const main = scaled(bmp, MAX_MAIN);
-      const images = [{ data: await toBase64(main, 0.92), mediaType: 'image/jpeg' }];
-      try { images.push({ data: await toBase64(enhanced(bmp), 0.9), mediaType: 'image/jpeg' }); } catch {}
-      bmp.close && bmp.close();
+    def test_formas_y_tipos(self):
+        pre = o.preprocesar(imagen_con_texto(), self.cfg)
+        self.assertEqual(pre.color.shape, (960, 1600, 3))  # 1000 px < 1600: se amplía
+        self.assertAlmostEqual(pre.escala, 1.6)
+        for gris in (pre.mejorada, pre.binaria):
+            self.assertEqual(gris.shape, (960, 1600))
+            self.assertEqual(gris.dtype, np.uint8)
+        self.assertTrue(es_binaria(pre.binaria))
 
-      setStatus('Analizando la receta con IA (razonamiento detallado). Puede tardar entre 20 y 60 segundos…');
-      const res = await fetch('/api/read', {
-        method: 'POST',
-        signal: ctrl.signal,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ images })
-      });
-      let data = {};
-      try { data = await res.json(); } catch {}
-      if (!res.ok) {
-        throw new Error(data.error || (res.status === 504 || res.status === 502
-          ? 'El servidor tardó demasiado en responder. Reintenta o baja LECTOR_EFFORT.'
-          : 'Error del servidor (' + res.status + ')'));
-      }
+    def test_imagen_grande_se_reduce(self):
+        grande = np.full((4000, 6000, 3), 200, np.uint8)
+        pre = o.preprocesar(grande, self.cfg)
+        self.assertEqual(max(pre.color.shape[:2]), self.cfg.lado_max_px)
 
-      out.value = (data.transcripcion || '').trim();
-      renderResult(data);
-      setStatus(data.legible === false
-        ? 'La receta no se pudo leer bien. Prueba con una foto más nítida.'
-        : 'Listo. Revisa los datos marcados en amarillo y verifica todo con un profesional.');
-    } catch (e) {
-      setStatus('Error: ' + (e.name === 'AbortError' ? 'se agotó el tiempo de espera' : (e.message || e)), true);
-    } finally {
-      clearTimeout(timer);
-      $('btnRead').disabled = false;
-      bar.classList.remove('on');
-    }
-  }
+    def test_binaria_deja_texto_negro_sobre_fondo_blanco(self):
+        for invertida in (False, True):
+            pre = o.preprocesar(imagen_con_texto(claro_sobre_oscuro=invertida), self.cfg)
+            negros = float(np.mean(pre.binaria == 0))
+            self.assertGreater(float(pre.binaria.mean()), 200, f"fondo no blanco (invertida={invertida})")
+            self.assertTrue(0.002 < negros < 0.30, f"fracción de texto {negros:.4f} (invertida={invertida})")
 
-  $('btnStart').onclick = startCamera;
-  $('btnStop').onclick = closeToIdle;
-  $('btnShot').onclick = capture;
-  $('btnFlip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCamera(); };
-  $('btnRetake').onclick = () => { capturedBlob = null; startCamera(); };
-  $('btnRead').onclick = readReceipt;
-  btnTorch.onclick = async () => {
-    const track = stream && stream.getVideoTracks()[0];
-    if (!track) return;
-    torchOn = !torchOn;
-    try { await track.applyConstraints({ advanced: [{ torch: torchOn }] }); }
-    catch { torchOn = !torchOn; setStatus('Linterna no disponible.', true); }
-  };
+    def test_iluminacion_desigual_no_pierde_texto_en_zona_oscura(self):
+        pre = o.preprocesar(imagen_con_texto(gradiente=True), self.cfg)
+        mitad = pre.binaria.shape[1] // 2
+        izquierda = float(np.mean(pre.binaria[:, :mitad] == 0))  # lado más oscuro del degradado
+        derecha = float(np.mean(pre.binaria[:, mitad:] == 0))
+        self.assertGreater(izquierda, 0.002)
+        self.assertGreater(derecha, 0.0)
+        self.assertLess(izquierda, 0.25, "el lado oscuro se binarizó como si fuera texto")
 
-  for (const id of ['fileCam', 'fileGal']) {
-    $(id).onchange = e => {
-      const f = e.target.files[0];
-      if (f) { stopCamera(); setCaptured(f); }
-      e.target.value = '';
-    };
-  }
 
-  $('btnCopy').onclick = async () => {
-    try { await navigator.clipboard.writeText(out.value); setStatus('Texto copiado.'); }
-    catch { out.select(); document.execCommand('copy'); setStatus('Texto copiado.'); }
-  };
-  $('btnClear').onclick = () => {
-    out.value = ''; infoEl.textContent = ''; medsEl.textContent = ''; extraEl.textContent = '';
-    medsCard.hidden = true; setStatus('');
-  };
+class TestRelleno(unittest.TestCase):
+    def test_caja_horizontal(self):
+        self.assertEqual(o.expandir_caja_horizontal([100, 400, 100, 140], 2000, 1000, 0.12, 1.5),
+                         [64, 436, 95, 145])
 
-  document.addEventListener('visibilitychange', () => { if (document.hidden && stream) closeToIdle(); });
-})();
-</script>
-</body>
-</html>
+    def test_tope_horizontal_en_lineas_largas(self):
+        # ancho 1000, alto 40: 12 % serían 120 px, pero el tope es 1.5 alturas = 60 px
+        self.assertEqual(o.expandir_caja_horizontal([500, 1500, 100, 140], 3000, 1000, 0.12, 1.5),
+                         [440, 1560, 95, 145])
+
+    def test_se_acota_a_los_bordes(self):
+        # ancho 95 -> relleno 14.25: x1 = 114.25 se redondea hacia arriba (nunca recorta de más)
+        self.assertEqual(o.expandir_caja_horizontal([5, 100, 3, 40], 120, 50, 0.15, 1.5), [0, 115, 0, 46])
+        self.assertEqual(o.expandir_caja_horizontal([60, 118, 20, 49], 120, 50, 0.15, 1.5)[1::2], [120, 50])
+
+    def test_poligono_horizontal(self):
+        p = o.expandir_poligono([[100, 100], [400, 100], [400, 140], [100, 140]], 2000, 1000, 0.12, 1.5)
+        self.assertAlmostEqual(float(np.linalg.norm(p[1] - p[0])), 372.0, delta=0.5)
+        self.assertAlmostEqual(float(np.linalg.norm(p[3] - p[0])), 49.6, delta=0.5)
+
+    def test_poligono_inclinado_conserva_su_orientacion(self):
+        ang = np.deg2rad(30)
+        rot = np.array([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]])
+        base = np.array([[-150, -20], [150, -20], [150, 20], [-150, 20]], dtype=float)
+        quad = (base @ rot.T) + np.array([1000, 600])
+        p = o.expandir_poligono(quad.tolist(), 2000, 1200, 0.12, 1.5)
+        self.assertAlmostEqual(float(np.linalg.norm(p[1] - p[0])), 372.0, delta=0.5)
+        self.assertAlmostEqual(float(np.linalg.norm(p[3] - p[0])), 49.6, delta=0.5)
+        eje = (p[1] - p[0]) / np.linalg.norm(p[1] - p[0])
+        self.assertAlmostEqual(float(np.degrees(np.arctan2(eje[1], eje[0]))), 30.0, delta=0.5)
+        self.assertTrue(np.allclose(p.mean(axis=0), [1000, 600], atol=0.5))
+
+    def test_padding_fuera_de_10_15_se_rechaza(self):
+        for malo in (0.0, 0.05, 0.099, 0.16, 0.5):
+            with self.assertRaises(ValueError, msg=str(malo)):
+                o.Config(padding=malo)
+        for bueno in (0.10, 0.12, 0.15):
+            o.Config(padding=bueno)
+
+    def test_idioma_exclusivo_espanol(self):
+        for malo in (("en",), ("es", "en"), ("pt",)):
+            with self.assertRaises(ValueError):
+                o.Config(idiomas=malo)
+
+
+class TestPipeline(unittest.TestCase):
+    def pipeline(self, lector, **cfg):
+        return o.PipelineOCRFarmacia(o.Config(**cfg), lector=lector)
+
+    def test_cableado_completo(self):
+        def lectura(caja, img):
+            return ("ASPIR1NA 500mg", 0.82) if es_binaria(img) else ("Aspi 500 mg", 0.55)
+
+        lector = LectorFalso(horizontales=[[160, 640, 160, 224]], lectura=lectura)
+        res = self.pipeline(lector).procesar(imagen_con_texto())
+
+        # Detección: se pide a CRAFT sin margen propio y sobre la imagen mejorada (2D)
+        llamada = lector.detect_llamadas[0]
+        self.assertEqual(llamada["kw"]["add_margin"], 0.0)
+        self.assertEqual(len(llamada["shape"]), 2)
+
+        # Recorte: la caja que llega al reconocedor ya lleva el 12 % de relleno
+        self.assertTrue(lector.recognize_llamadas)
+        for r in lector.recognize_llamadas:
+            self.assertEqual(r["h"], [[102, 698, 152, 232]])
+            self.assertEqual(r["f"], [])
+            self.assertEqual(r["kw"]["allowlist"], o.ALLOWLIST_ES)
+            self.assertEqual(r["kw"]["decoder"], "beamsearch")
+            self.assertEqual(r["kw"]["batch_size"], 1)
+        self.assertEqual(len(lector.recognize_llamadas), 2)  # una por variante
+
+        # Compiten las dos variantes y gana la de mayor confianza
+        linea = res["lineas"][0]
+        self.assertEqual(linea["variante"], "binaria")
+        self.assertEqual(linea["texto_ocr"], "ASPIR1NA 500mg")
+        self.assertEqual(linea["texto_corregido"], "ASPIRINA 500mg")
+        self.assertTrue(linea["revisar"])
+        self.assertEqual(set(linea["alternativas"]), {"mejorada", "binaria"})
+        self.assertEqual([f["nombre"] for f in res["farmacos"]], ["Aspirina"])
+
+        # Las coordenadas se informan sobre la imagen ORIGINAL (escala 1.6 deshecha)
+        self.assertAlmostEqual(linea["caja"][0][0], 102 / 1.6, places=1)
+        self.assertEqual(res["dimensiones"], [1000, 600])
+        json.dumps(res, ensure_ascii=False)  # debe ser serializable
+
+    def test_prefijo_cortado_se_completa_de_extremo_a_extremo(self):
+        lector = LectorFalso(horizontales=[[160, 640, 160, 224]], lectura=lambda c, i: ("Aspi", 0.7))
+        res = self.pipeline(lector, variantes=("mejorada",)).procesar(imagen_con_texto())
+        self.assertEqual(res["lineas"][0]["texto_corregido"], "Aspirina")
+        self.assertEqual(res["farmacos"][0]["mejor_estado"], "prefijo")
+        self.assertEqual(len(lector.recognize_llamadas), 1)
+
+    def test_poligono_se_envia_como_free_list(self):
+        quad = [[200, 300], [700, 340], [695, 400], [195, 360]]
+        lector = LectorFalso(libres=[quad], lectura=lambda c, i: ("Ibuprofeno 400 mg", 0.9))
+        res = self.pipeline(lector, variantes=("mejorada",)).procesar(imagen_con_texto())
+        r = lector.recognize_llamadas[0]
+        self.assertEqual(r["h"], [])
+        self.assertEqual(len(r["f"][0]), 4)
+        ancho_original = np.linalg.norm(np.array(quad[1]) - np.array(quad[0]))
+        ancho_enviado = np.linalg.norm(np.array(r["f"][0][1]) - np.array(r["f"][0][0]))
+        self.assertGreater(ancho_enviado, ancho_original * 1.2)
+        self.assertEqual(res["lineas"][0]["texto_corregido"], "Ibuprofeno 400 mg")
+        self.assertFalse(res["lineas"][0]["revisar"])
+
+    def test_baja_confianza_se_descarta_y_ambiguo_se_reporta(self):
+        def lectura(caja, img):
+            # la caja superior (y < 300) es ruido; la inferior trae un prefijo ambiguo
+            return ("ruido xx", 0.10) if caja[2] < 300 else ("Clon 2 mg", 0.9)
+
+        lector = LectorFalso(horizontales=[[160, 640, 160, 224], [160, 640, 400, 464]], lectura=lectura)
+        res = self.pipeline(lector, variantes=("mejorada",)).procesar(imagen_con_texto())
+        self.assertEqual(res["resumen"]["lineas_descartadas"], 1)
+        self.assertEqual(len(res["lineas"]), 1)
+        self.assertEqual(res["lineas"][0]["texto_corregido"], "Clon 2 mg")  # ambiguo: no se toca
+        self.assertTrue(res["lineas"][0]["revisar"])
+        self.assertEqual(res["farmacos"], [])
+        self.assertEqual(res["ambiguos"][0]["original"], "Clon")
+
+    def test_sin_regiones(self):
+        res = self.pipeline(LectorFalso(lectura=lambda c, i: ("", 0))).procesar(imagen_con_texto())
+        self.assertEqual((res["lineas"], res["farmacos"], res["texto_completo"]), ([], [], ""))
+
+    def test_orden_de_lectura_arriba_a_abajo(self):
+        textos = {"arriba": ("Paracetamol 500 mg", 0.9), "abajo": ("Ibuprofeno 400 mg", 0.9)}
+        lector = LectorFalso(horizontales=[[160, 640, 500, 564], [160, 640, 100, 164]],
+                             lectura=lambda caja, img: textos["arriba" if caja[2] < 300 else "abajo"])
+        res = self.pipeline(lector, variantes=("mejorada",)).procesar(imagen_con_texto())
+        self.assertEqual([l["texto_ocr"] for l in res["lineas"]], ["Paracetamol 500 mg", "Ibuprofeno 400 mg"])
+
+
+class TestEvaluacionYEntradaSalida(unittest.TestCase):
+    def test_metricas(self):
+        resultados = {"a.jpg": {"farmacos": [{"nombre": "Aspirina"}, {"nombre": "Ibuprofeno"}]},
+                      "b.jpg": {"farmacos": [{"nombre": "Paracetamol"}]}}
+        etiquetas = {"a.jpg": ["Aspirina", "Paracetamol"], "b.jpg": ["paracetamol"]}
+        m = o.evaluar(resultados, etiquetas)
+        self.assertEqual((m["precision"], m["exhaustividad"]), (0.6667, 0.6667))
+        self.assertEqual(m["imagenes_perfectas"], 1)
+        self.assertEqual(m["detalle"]["a.jpg"]["sobrantes"], ["ibuprofeno"])
+        self.assertEqual(m["detalle"]["a.jpg"]["faltantes"], ["paracetamol"])
+
+    def test_imagen_faltante_cuenta_como_no_encontrada(self):
+        m = o.evaluar({}, {"x.jpg": ["Aspirina"]})
+        self.assertEqual((m["exhaustividad"], m["imagenes_perfectas"]), (0.0, 0))
+
+    def test_leer_guardar_y_anotar_con_ruta_con_acentos(self):
+        with tempfile.TemporaryDirectory() as d:
+            ruta = Path(d) / "fotografía ñ.png"
+            o.guardar_imagen(ruta, imagen_con_texto())
+            img = o.leer_imagen(ruta)
+            self.assertEqual(img.shape, (600, 1000, 3))
+            lineas = [{"id": 1, "caja": [[10, 10], [200, 10], [200, 60], [10, 60]], "confianza_ocr": 0.9, "revisar": False},
+                      {"id": 2, "caja": [[10, 100], [200, 100], [200, 160], [10, 160]], "confianza_ocr": 0.3, "revisar": True}]
+            anotada = o.dibujar_anotaciones(img, lineas)
+            self.assertEqual(anotada.shape, img.shape)
+            self.assertFalse(np.array_equal(anotada, img))
+            invalida = Path(d) / "no_es_imagen.txt"
+            invalida.write_bytes(b"hola")
+            with self.assertRaises(ValueError):
+                o.leer_imagen(invalida)
+
+    def test_expandir_rutas_y_parser(self):
+        with tempfile.TemporaryDirectory() as d:
+            for nombre in ("a.jpg", "b.PNG", "c.txt"):
+                (Path(d) / nombre).write_bytes(b"x")
+            self.assertEqual([p.name for p in o.expandir_rutas([d])], ["a.jpg", "b.PNG"])
+            with self.assertRaises(FileNotFoundError):
+                o.expandir_rutas([str(Path(d) / "no_existe.jpg")])
+        args = o.construir_parser().parse_args(["foto.jpg", "--cpu", "--padding", "0.15", "--variantes", "binaria"])
+        self.assertTrue(args.cpu)
+        self.assertEqual((args.padding, args.variantes), (0.15, "binaria"))
+
+    def test_diccionario_externo(self):
+        with tempfile.TemporaryDirectory() as d:
+            archivo = Path(d) / "extra.txt"
+            archivo.write_text("# comentario\nZorbitrex\nQuimerol forte\n", encoding="utf-8")
+            dic = o.Diccionario.desde_archivo(archivo)
+            self.assertIn("zorbitrex", dic.canonico)
+            self.assertIn("quimerol", dic.canonico)
+            self.assertNotIn("forte", dic.canonico)  # palabra común: nunca es "fármaco"
+            self.assertEqual(o.Corrector(dic, o.Config()).corregir_token("zorbitrx").corregido, "Zorbitrex")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
