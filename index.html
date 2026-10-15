@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Lector de recetas médicas</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root { --bg:#f4f8fb; --card:#fff; --ink:#12263a; --muted:#5b6f82; --brand:#0e7c86; --brand-d:#0a5c64; --line:#d8e3ec; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); padding:env(safe-area-inset-top) 16px 32px; }
+  main { max-width:640px; margin:0 auto; }
+  h1 { font-size:1.35rem; margin:18px 0 4px; }
+  p.sub { margin:0 0 14px; color:var(--muted); font-size:.92rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px; }
+  .viewer { position:relative; background:#0b1620; border-radius:12px; overflow:hidden; aspect-ratio:3/4; display:none; }
+  .viewer.on { display:block; }
+  video, .viewer img { width:100%; height:100%; object-fit:cover; display:block; }
+  .guide { position:absolute; inset:8% 6%; border:2px dashed rgba(255,255,255,.7); border-radius:10px; pointer-events:none; }
+  .hint { position:absolute; left:0; right:0; bottom:8px; text-align:center; color:#fff; font-size:.8rem; text-shadow:0 1px 3px #000; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+  button, .btn { appearance:none; border:0; background:var(--brand); color:#fff; font-size:1rem; padding:12px 16px; border-radius:10px; cursor:pointer; flex:1 1 auto; text-align:center; font-weight:600; }
+  button:hover, .btn:hover { background:var(--brand-d); }
+  button.sec, .btn.sec { background:#e6eef5; color:var(--ink); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  input[type=file] { display:none; }
+  .bar { height:10px; background:#e6eef5; border-radius:6px; overflow:hidden; margin-top:10px; display:none; }
+  .bar.on { display:block; }
+  .bar > i { display:block; height:100%; width:0; background:var(--brand); transition:width .2s; }
+  #status { font-size:.9rem; color:var(--muted); margin-top:8px; min-height:1.2em; }
+  textarea { width:100%; min-height:220px; border:1px solid var(--line); border-radius:10px; padding:10px; font:inherit; font-size:1rem; resize:vertical; }
+  .warn { background:#fff4d6; border:1px solid #e6c766; border-radius:10px; padding:10px 12px; font-size:.88rem; margin-bottom:12px; }
+  label { font-size:.85rem; color:var(--muted); display:block; margin-bottom:4px; }
+  select { width:100%; padding:10px; border-radius:10px; border:1px solid var(--line); font-size:1rem; background:#fff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Lector de recetas médicas</h1>
+  <p class="sub">Apunta la cámara trasera a la receta y toma la foto.</p>
+
+  <div class="warn">⚠️ El OCR puede equivocarse, sobre todo con letra manuscrita. Verifica siempre nombres de medicamentos y dosis con el médico o el farmacéutico.</div>
+
+  <section class="card">
+    <div class="viewer" id="viewer">
+      <video id="video" playsinline muted autoplay></video>
+      <img id="photo" alt="Foto capturada" hidden />
+      <div class="guide" id="guide"></div>
+      <div class="hint" id="hint">Encuadra la receta, con buena luz y sin sombras</div>
+    </div>
+
+    <div class="row" id="rowIdle">
+      <button id="btnStart">📷 Abrir cámara</button>
+      <label class="btn sec" for="fileCam">Tomar foto (app de cámara)</label>
+      <label class="btn sec" for="fileGal">Elegir de galería</label>
+    </div>
+    <div class="row" id="rowLive" hidden>
+      <button id="btnShot">📸 Capturar</button>
+      <button class="sec" id="btnFlip">🔄 Cambiar cámara</button>
+      <button class="sec" id="btnTorch" hidden>🔦 Linterna</button>
+      <button class="sec" id="btnStop">Cerrar</button>
+    </div>
+    <div class="row" id="rowShot" hidden>
+      <button id="btnOcr">🔍 Leer texto</button>
+      <button class="sec" id="btnRetake">Repetir</button>
+    </div>
+
+    <input type="file" id="fileCam" accept="image/*" capture="environment" />
+    <input type="file" id="fileGal" accept="image/*" />
+    <canvas id="canvas" hidden></canvas>
+  </section>
+
+  <section class="card">
+    <label for="lang">Idioma de la receta</label>
+    <select id="lang">
+      <option value="spa">Español</option>
+      <option value="por">Português</option>
+      <option value="spa+por">Español + Português</option>
+      <option value="eng">English</option>
+    </select>
+    <div class="bar" id="bar"><i id="barFill"></i></div>
+    <div id="status"></div>
+  </section>
+
+  <section class="card">
+    <label for="out">Texto reconocido (puedes editarlo)</label>
+    <textarea id="out" placeholder="Aquí aparecerá el texto de la receta…"></textarea>
+    <div class="row">
+      <button id="btnCopy" class="sec">Copiar</button>
+      <button id="btnClear" class="sec">Limpiar</button>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('video'), photo = $('photo'), canvas = $('canvas');
+  const viewer = $('viewer'), guide = $('guide'), hint = $('hint');
+  const rowIdle = $('rowIdle'), rowLive = $('rowLive'), rowShot = $('rowShot');
+  const btnTorch = $('btnTorch');
+  const statusEl = $('status'), bar = $('bar'), barFill = $('barFill'), out = $('out');
+
+  let stream = null, facing = 'environment', capturedBlob = null, torchOn = false;
+
+  const setStatus = t => statusEl.textContent = t;
+  const show = (el, on) => el.hidden = !on;
+
+  async function startCamera() {
+    stopCamera();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus('La cámara requiere HTTPS. Usa "Tomar foto (app de cámara)" como alternativa.');
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: facing },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      });
+      video.srcObject = stream;
+      await video.play();
+      viewer.classList.add('on');
+      video.hidden = false; photo.hidden = true; guide.hidden = false; hint.hidden = false;
+      show(rowIdle, false); show(rowLive, true); show(rowShot, false);
+
+      // Linterna (solo si el dispositivo la soporta)
+      const track = stream.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      show(btnTorch, !!caps.torch);
+      torchOn = false;
+
+      // Enfoque continuo si está disponible
+      if (caps.focusMode && caps.focusMode.includes('continuous')) {
+        track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+      }
+      setStatus('');
+    } catch (e) {
+      const msg = e.name === 'NotAllowedError'
+        ? 'Permiso de cámara denegado. Actívalo en los ajustes del navegador.'
+        : 'No se pudo abrir la cámara (' + e.name + '). Prueba "Tomar foto (app de cámara)".';
+      setStatus(msg);
+    }
+  }
+
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    video.srcObject = null;
+  }
+
+  function closeToIdle() {
+    stopCamera();
+    viewer.classList.remove('on');
+    show(rowIdle, true); show(rowLive, false); show(rowShot, false);
+  }
+
+  function capture() {
+    if (!video.videoWidth) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    canvas.toBlob(b => {
+      setCaptured(b);
+      stopCamera();
+    }, 'image/jpeg', 0.95);
+  }
+
+  function setCaptured(blob) {
+    capturedBlob = blob;
+    if (photo.src) URL.revokeObjectURL(photo.src);
+    photo.src = URL.createObjectURL(blob);
+    viewer.classList.add('on');
+    video.hidden = true; photo.hidden = false; guide.hidden = true; hint.hidden = true;
+    show(rowIdle, false); show(rowLive, false); show(rowShot, true);
+    setStatus('Foto lista. Pulsa "Leer texto".');
+  }
+
+  // Convierte a escala de grises, escala el tamaño y estira el contraste
+  async function preprocess(blob) {
+    const bmp = await createImageBitmap(blob);
+    const MAX = 2200;
+    const k = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const img = ctx.getImageData(0, 0, w, h), d = img.data;
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < d.length; i += 4) {
+      const g = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
+      d[i] = d[i + 1] = d[i + 2] = g; hist[g]++;
+    }
+    const total = w * h;
+    let acc = 0, lo = 0, hi = 255;
+    for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > total * 0.02) { lo = i; break; } }
+    acc = 0;
+    for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > total * 0.02) { hi = i; break; } }
+    const range = Math.max(1, hi - lo);
+    for (let i = 0; i < d.length; i += 4) {
+      const v = Math.max(0, Math.min(255, ((d[i] - lo) * 255) / range));
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas;
+  }
+
+  async function runOcr() {
+    if (!capturedBlob) return;
+    $('btnOcr').disabled = true;
+    bar.classList.add('on'); barFill.style.width = '0%';
+    setStatus('Preparando imagen…');
+    let worker;
+    try {
+      const prepared = await preprocess(capturedBlob);
+      worker = await Tesseract.createWorker($('lang').value, 1, {
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            barFill.style.width = Math.round(m.progress * 100) + '%';
+            setStatus('Leyendo texto… ' + Math.round(m.progress * 100) + '%');
+          } else {
+            setStatus('Cargando motor OCR (' + m.status + ')…');
+          }
+        }
+      });
+      await worker.setParameters({ preserve_interword_spaces: '1', tessedit_pageseg_mode: '6' });
+      const { data } = await worker.recognize(prepared);
+      out.value = data.text.trim();
+      setStatus(out.value
+        ? 'Listo (confianza ~' + Math.round(data.confidence) + '%). Revisa y corrige el texto.'
+        : 'No se detectó texto. Intenta con más luz o más cerca.');
+    } catch (e) {
+      setStatus('Error al leer la imagen: ' + (e.message || e));
+    } finally {
+      if (worker) await worker.terminate();
+      $('btnOcr').disabled = false;
+      setTimeout(() => bar.classList.remove('on'), 800);
+    }
+  }
+
+  $('btnStart').onclick = startCamera;
+  $('btnStop').onclick = closeToIdle;
+  $('btnShot').onclick = capture;
+  $('btnFlip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCamera(); };
+  $('btnRetake').onclick = () => { capturedBlob = null; startCamera(); };
+  $('btnOcr').onclick = runOcr;
+  btnTorch.onclick = async () => {
+    const track = stream && stream.getVideoTracks()[0];
+    if (!track) return;
+    torchOn = !torchOn;
+    try { await track.applyConstraints({ advanced: [{ torch: torchOn }] }); }
+    catch { torchOn = !torchOn; setStatus('Linterna no disponible.'); }
+  };
+
+  for (const id of ['fileCam', 'fileGal']) {
+    $(id).onchange = e => {
+      const f = e.target.files[0];
+      if (f) { stopCamera(); setCaptured(f); }
+      e.target.value = '';
+    };
+  }
+
+  $('btnCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText(out.value); setStatus('Texto copiado.'); }
+    catch { out.select(); document.execCommand('copy'); setStatus('Texto copiado.'); }
+  };
+  $('btnClear').onclick = () => { out.value = ''; setStatus(''); };
+
+  document.addEventListener('visibilitychange', () => { if (document.hidden && stream) closeToIdle(); });
+})();
+</script>
+</body>
+</html>
